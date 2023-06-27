@@ -20,9 +20,24 @@ class Route53DDNSIPv6:
             for line in if_inet6:
                 parts = line.split()
                 if parts[5] == 'eth0':
-                    ipv6_address = ipaddress.IPv6Address(parts[0])
-                    if ipv6_address.is_global:
-                        return ipv6_address
+                    ipv6_address = parts[0]
+    
+                    if ':' in ipv6_address:
+                        # IPv6 address already contains colons, use it as is
+                        formatted_ipv6 = ipv6_address
+                    else:
+                        # Insert colons into the IPv6 address string
+                        formatted_ipv6 = ':'.join(
+                            ipv6_address[i:i+4] for i in range(0, len(ipv6_address), 4)
+                        )
+    
+                    try:
+                        ip = ipaddress.IPv6Address(formatted_ipv6)
+                        if ip.is_global:
+                            return ip
+                    except ipaddress.AddressValueError:
+                        # Invalid IPv6 address
+                        pass
 
         return None
 
