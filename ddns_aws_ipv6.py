@@ -5,8 +5,9 @@ import argparse
 import boto3
 
 class Route53DDNSIPv6:
-    def __init__(self, profile):
+    def __init__(self, profile, zone_id):
         self.profile = profile
+        self.zone_id = zone_id
         self.client = self._get_route53_client()
 
     def _get_route53_client(self):
@@ -14,14 +15,16 @@ class Route53DDNSIPv6:
         session = boto3.Session(profile_name=self.profile)
         return session.client('route53')
 
-    def _get_public_ipv6_address(self):
+    def _get_public_ipv6_addresses(self):
         # Get the IPv6 addresses from eth0 interface
+        ipv6_addresses = []
+
         with open('/proc/net/if_inet6', 'r') as if_inet6:
             for line in if_inet6:
                 parts = line.split()
                 if parts[5] == 'eth0':
                     ipv6_address = parts[0]
-    
+
                     if ':' in ipv6_address:
                         # IPv6 address already contains colons, use it as is
                         formatted_ipv6 = ipv6_address
@@ -30,82 +33,93 @@ class Route53DDNSIPv6:
                         formatted_ipv6 = ':'.join(
                             ipv6_address[i:i+4] for i in range(0, len(ipv6_address), 4)
                         )
-    
+
                     try:
                         ip = ipaddress.IPv6Address(formatted_ipv6)
                         if ip.is_global:
-                            return ip
+                            ipv6_addresses.append(ip)
                     except ipaddress.AddressValueError:
                         # Invalid IPv6 address
                         pass
 
-        return None
+        return ipv6_addresses
 
-    def _get_existing_aaaa_record_value(self):
-        # Get the existing "AAAA" record value from Route 53
+    def _get_existing_aaaa_record_values(self):
+        # Get the existing "AAAA" record values from Route 53
         response = self.client.list_resource_record_sets(
-            HostedZoneId='YOUR_HOSTED_ZONE_ID',
+            HostedZoneId=self.zone_id,
             StartRecordName='example.com.',
             StartRecordType='AAAA',
             MaxItems='1'
         )
 
+        record_values = []
+
         if 'ResourceRecordSets' in response:
             record_set = response['ResourceRecordSets'][0]
             if record_set['Name'] == 'example.com.' and record_set['Type'] == 'AAAA':
-                return record_set['ResourceRecords'][0]['Value']
+                record_values = [record['Value'] for record in record_set['ResourceRecords']]
 
-        return None
+        return record_values
 
-    def _update_route53_aaaa_record(self, ipv6_address):
-        # Get the existing "AAAA" record value
-        existing_value = self._get_existing_aaaa_record_value()
+    def _update_route53_aaaa_record(self, ipv6_addresses):
+        # Get the existing "AAAA" record values
+        existing_values = self._get_existing_aaaa_record_values()
 
-        # Check if the record already exists and has the same value
-        if existing_value == str(ipv6_address):
+        # Filter out IPv6 addresses that already exist in Route 53
+        new_addresses = [str(addr) for addr in ipv6_addresses if str(addr) not in existing_values]
+
+        if not new_addresses:
             print('Route 53 record is already up to date.')
             return
 
+        # Prepare the changes for the "AAAA" record in Route 53
+        changes = []
+        for address in new_addresses:
+            change = {
+                'Action': 'UPSERT',
+                'ResourceRecordSet': {
+                    'Name': 'example.com.',
+                    'Type': 'AAAA',
+                    'TTL': 300,
+                    'ResourceRecords': [
+                        {
+                            'Value': address
+                        }
+                    ]
+                }
+            }
+            changes.append(change)
+
         # Update the "AAAA" record in Route 53
         response = self.client.change_resource_record_sets(
-            HostedZoneId='YOUR_HOSTED_ZONE_ID',
+            HostedZoneId=self.zone_id,
             ChangeBatch={
-                'Changes': [
-                    {
-                        'Action': 'UPSERT',
-                        'ResourceRecordSet': {
-                            'Name': 'example.com.',
-                            'Type': 'AAAA',
-                            'TTL': 300,
-                            'ResourceRecords': [
-                                {
-                                    'Value': str(ipv6_address)
-                                }
-                            ]
-                        }
-                    }
-                ]
+                'Changes': changes
             }
         )
 
         print('Route 53 record updated successfully.')
 
     def update_route53_record(self):
-        # Get the public IPv6 address from eth0
-        public_ipv6 = self._get_public_ipv6_address()
+        # Get the public IPv6 addresses from eth0
+        public_ipv6_addresses = self._get_public_ipv6_addresses()
 
-        if public_ipv6 is not None:
-            # Update the corresponding "AAAA" record in Route 53 if it has changed
-            self._update_route53_aaaa_record(public_ipv6)
+        if public_ipv6_addresses:
+            # Update the corresponding "AAAA" records in Route 53 if they have changed
+            self._update_route53_aaaa_record(public_ipv6_addresses)
         else:
-            print('No public IPv6 address found on eth0.')
+            print('No public IPv6 addresses found on eth0.')
 
 if __name__ == '__main__':
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Update Route 53 AAAA record with public IPv6 address')
+    parser = argparse.ArgumentParser(description='Update Route 53 AAAA record with public IPv6 addresses.')
     parser.add_argument('-p', '--profile', required=True, help='AWS CLI profile name')
+    parser.add_argument('-z', '--zone-id', required=True, help='Route 53 hosted zone ID')
     args = parser.parse_args()
 
-    # Create an instance of the Route53DDNSIPv6 class and update the Route 53 record
-    updater = Route53DDNSIPv6(args.profile)
+    # Create an instance of Route53DDNSIPv6
+    updater = Route53DDNSIPv6(args.profile, args.zone_id)
+
+    # Update the Route 53 record
     updater.update_route53_record()
