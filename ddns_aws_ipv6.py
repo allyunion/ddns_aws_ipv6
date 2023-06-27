@@ -7,12 +7,13 @@ import logging
 import time
 
 class Route53DDNSIPv6:
-    def __init__(self, profile, zone_id, hostname):
+    def __init__(self, profile, zone_id, hostname, verbose=False):
         self.profile = profile
         self.zone_id = zone_id
         self.hostname = hostname
         self.client = self._get_route53_client()
         self.logger = self._get_logger()
+        self.verbose = verbose
 
     def _get_route53_client(self):
         # Initialize the Route 53 client using the specified AWS CLI profile
@@ -35,6 +36,10 @@ class Route53DDNSIPv6:
         logger.addHandler(file_handler)
 
         return logger
+
+    def _print_verbose(self, message):
+        if self.verbose:
+            print(message)
 
     def _get_public_ipv6_addresses(self):
         # Get the IPv6 addresses from eth0 interface
@@ -93,6 +98,7 @@ class Route53DDNSIPv6:
             new_addresses = [str(addr) for addr in ipv6_addresses if str(addr) not in existing_values]
 
             if not new_addresses:
+                self._print_verbose('Route 53 record is already up to date.')
                 self.logger.info('Route 53 record is already up to date.')
                 return
 
@@ -140,9 +146,11 @@ class Route53DDNSIPv6:
             }
         )
 
+        self._print_verbose('Route 53 record updated successfully.')
         self.logger.info('Route 53 record updated successfully.')
 
     def update_route53_record(self):
+        self._print_verbose('DNS record update process started.')
         self.logger.info('DNS record update process started.')
 
         # Get the public IPv6 addresses from eth0
@@ -150,11 +158,14 @@ class Route53DDNSIPv6:
 
         if public_ipv6_addresses:
             # Update the corresponding "AAAA" records in Route 53 if they have changed
+            self._print_verbose('Attempting to update Route 53 record...')
             self.logger.info('Attempting to update Route 53 record...')
             self._update_route53_aaaa_record(public_ipv6_addresses)
         else:
+            self._print_verbose('No public IPv6 addresses found on eth0.')
             self.logger.warning('No public IPv6 addresses found on eth0.')
 
+        self._print_verbose('DNS record update process completed.')
         self.logger.info('DNS record update process completed.')
 
 if __name__ == '__main__':
@@ -163,10 +174,11 @@ if __name__ == '__main__':
     parser.add_argument('-p', '--profile', required=True, help='AWS CLI profile name')
     parser.add_argument('-z', '--zone-id', required=True, help='Route 53 hosted zone ID')
     parser.add_argument('-n', '--hostname', required=True, help='Hostname for the record set')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
     args = parser.parse_args()
 
     # Create an instance of Route53DDNSIPv6
-    updater = Route53DDNSIPv6(args.profile, args.zone_id, args.hostname)
+    updater = Route53DDNSIPv6(args.profile, args.zone_id, args.hostname, args.verbose)
 
     # Update the Route 53 record
     updater.update_route53_record()
