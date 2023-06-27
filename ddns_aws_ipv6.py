@@ -3,6 +3,8 @@
 import ipaddress
 import argparse
 import boto3
+import logging
+import time
 
 class Route53DDNSIPv6:
     def __init__(self, profile, zone_id, hostname):
@@ -10,11 +12,29 @@ class Route53DDNSIPv6:
         self.zone_id = zone_id
         self.hostname = hostname
         self.client = self._get_route53_client()
+        self.logger = self._get_logger()
 
     def _get_route53_client(self):
         # Initialize the Route 53 client using the specified AWS CLI profile
         session = boto3.Session(profile_name=self.profile)
         return session.client('route53')
+
+    def _get_logger(self):
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.INFO)
+
+        # Create a file handler for logging
+        log_file = f'{self.hostname}_ddns.log'
+        file_handler = logging.FileHandler(log_file)
+
+        # Create a formatter with Apache log format
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='[%d/%b/%Y:%H:%M:%S %z]')
+        file_handler.setFormatter(formatter)
+
+        # Add the file handler to the logger
+        logger.addHandler(file_handler)
+
+        return logger
 
     def _get_public_ipv6_addresses(self):
         # Get the IPv6 addresses from eth0 interface
@@ -73,7 +93,7 @@ class Route53DDNSIPv6:
             new_addresses = [str(addr) for addr in ipv6_addresses if str(addr) not in existing_values]
 
             if not new_addresses:
-                print('Route 53 record is already up to date.')
+                self.logger.info('Route 53 record is already up to date.')
                 return
 
             # Prepare the changes for the "AAAA" record in Route 53
@@ -120,17 +140,22 @@ class Route53DDNSIPv6:
             }
         )
 
-        print('Route 53 record updated successfully.')
+        self.logger.info('Route 53 record updated successfully.')
 
     def update_route53_record(self):
+        self.logger.info('DNS record update process started.')
+
         # Get the public IPv6 addresses from eth0
         public_ipv6_addresses = self._get_public_ipv6_addresses()
 
         if public_ipv6_addresses:
             # Update the corresponding "AAAA" records in Route 53 if they have changed
+            self.logger.info('Attempting to update Route 53 record...')
             self._update_route53_aaaa_record(public_ipv6_addresses)
         else:
-            print('No public IPv6 addresses found on eth0.')
+            self.logger.warning('No public IPv6 addresses found on eth0.')
+
+        self.logger.info('DNS record update process completed.')
 
 if __name__ == '__main__':
     # Parse command line arguments
